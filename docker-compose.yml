@@ -1,0 +1,92 @@
+version: "3.9"
+
+networks:
+  app-network:
+    driver: bridge
+
+services:
+  backend:                 # ← C01-backend real
+    build: ./backend       # Dockerfile cu critoma + Maven + `CMD ["java","-jar","app.jar"]`
+    container_name: c01-backend
+    restart: unless-stopped
+    ports:
+      - "7000:7000"
+    volumes:
+      - ./shared:/app/shared
+    depends_on: [rabbitmq]
+    networks: [app-network]
+
+  # C02 – RabbitMQ broker (Topic & Queue)
+  rabbitmq:
+    build: ./rabbitmq
+    container_name: c02-rabbitmq
+    restart: always
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: admin123
+    ports:
+      - "5672:5672"     # AMQP
+      - "15672:15672"   # management UI
+    networks: [app-network]
+
+  # C01 – Front-end (React + Javalin publisher)  🔧 SCHIMB numele
+  frontend:
+    build: ./frontend
+    container_name: c01-frontend    # doar UN singur c01 !
+    ports:
+      - "3000:3000"     # React dev-server
+    depends_on: [backend]
+    networks: [app-network]
+
+  # C03 – Java MDB + OpenMPI launcher
+  java-mdb:
+    build: ./java-mdb
+    container_name: c03-java-mdb
+    volumes:
+      - ./shared:/app/shared          # BMP-urile
+    depends_on: [rabbitmq, mysql]
+    networks: [app-network]
+
+  # C04 – OpenMPI worker
+  openmpi-worker:
+    build: ./openmpi
+    container_name: c04-openmpi-worker
+    volumes:
+      - ./shared:/app/shared
+    depends_on: [java-mdb]
+    networks: [app-network]
+
+  # C05 – node.js + MySQL + (opţional Mongo)
+  nodejs-db:
+    build: ./nodejs
+    container_name: c05-nodejs-db
+    restart: always
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./mysql-data:/var/lib/mysql
+      - ./mongo-data:/data/db
+      - ./shared:/app/shared
+    depends_on: [mysql, mongo]
+    networks: [app-network]
+
+  # MySQL (blob-uri BMP) – folosit de java-mdb & nodejs
+  mysql:
+    image: mysql:8.0
+    container_name: mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: password
+      MYSQL_DATABASE: image_db
+    ports:
+      - "3306:3306"
+    networks: [app-network]
+
+  # Mongo (SNMP – opţional)
+  mongo:
+    image: mongo:7
+    container_name: mongo
+    restart: always
+    ports:
+      - "27017:27017"
+    networks: [app-network]
